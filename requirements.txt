@@ -1,1 +1,10 @@
 streamlit
+pandas
+plotly
+numpy
+scikit-learn
+altair
+requests
+altair_data_server
+plotly.express
+thefuzz
