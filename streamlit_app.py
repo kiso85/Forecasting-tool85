@@ -122,6 +122,7 @@ def crear_features_temporales(df):
     df['mes'] = df['fecha'].dt.month
     df['es_finde'] = (df['dia_semana'] >= 5).astype(int)
     return df
+# [ ... (todo el código anterior) ... ]
 
 # --------------------------------------------------------------------------
 # |                   BARRA LATERAL (SIDEBAR) (MODIFICADA)                 |
@@ -138,7 +139,21 @@ st.sidebar.markdown("---")
 
 # --- MODIFICADO: Carga de archivos con Selectbox ---
 st.sidebar.header("1. Carga de Datos Históricos")
-DATA_DIR = "data"
+
+# --- NUEVO: Camino robusto a la carpeta 'data' ---
+# Esto encuentra el directorio donde se está ejecutando el script (app.py)
+# y luego lo une a la carpeta 'data'
+try:
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    # __file__ no está definido si se ejecuta en un entorno como un notebook
+    SCRIPT_DIR = os.path.abspath('.')
+
+DATA_DIR = os.path.join(SCRIPT_DIR, "data")
+
+# --- NUEVO: Línea de depuración para ver dónde está buscando ---
+st.sidebar.info(f"Buscando datos en: {DATA_DIR}")
+
 selected_energy_file = None
 selected_weather_file = None
 
