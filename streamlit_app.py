@@ -1,5 +1,5 @@
 # --------------------------------------------------------------------------
-# |                        IMPORTAR LIBRERÍAS                             |
+# |                   IMPORTAR LIBRERÍAS                                   |
 # --------------------------------------------------------------------------
 import streamlit as st
 import pandas as pd
@@ -9,9 +9,10 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score
 import os
+import requests  # <-- NUEVO: Librería para hacer llamadas a la API
 
 # --------------------------------------------------------------------------
-# |                     CONFIGURACIÓN DE LA PÁGINA                         |
+# |                   CONFIGURACIÓN DE LA PÁGINA                             |
 # --------------------------------------------------------------------------
 st.set_page_config(
     page_title="Predicción de Consumo Energético con IA",
@@ -21,7 +22,7 @@ st.set_page_config(
 )
 
 # --------------------------------------------------------------------------
-# |                         FUNCIONES DE CARGA DE DATOS                     |
+# |                   FUNCIONES DE CARGA DE DATOS                            |
 # --------------------------------------------------------------------------
 
 @st.cache_data
@@ -74,6 +75,55 @@ def load_nasa_weather_data(uploaded_file):
         st.error(f"Error al procesar el archivo de clima de la NASA: {e}")
         return pd.DataFrame()
 
+# --- NUEVA FUNCIÓN PARA LA API ---
+@st.cache_data
+def get_weather_forecast(api_key, lat, lon):
+    """Obtiene el pronóstico del tiempo desde la API de Meteosource."""
+    BASE_URL = "https://www.meteosource.com/api/v1/free/point"
+    
+    params = {
+        "lat": lat,
+        "lon": lon,
+        "sections": "daily",  # Solo pedimos los datos diarios
+        "units": "metric",    # Para obtener temperaturas en Celsius
+        "key": api_key
+    }
+    
+    try:
+        response = requests.get(BASE_URL, params=params)
+        
+        if response.status_code == 200:
+            data = response.json()
+            daily_data = data.get('daily', {}).get('data', [])
+            
+            if not daily_data:
+                st.error("La API no devolvió datos de pronóstico diario.")
+                return pd.DataFrame()
+            
+            # Procesamos los datos para que coincidan con el formato del CSV
+            processed_data = []
+            for day in daily_data:
+                processed_data.append({
+                    'fecha': day.get('day'),
+                    'temp_max_c': day.get('all_day', {}).get('temperature_max'),
+                    'temp_min_c': day.get('all_day', {}).get('temperature_min')
+                })
+            
+            df_clima_futuro = pd.DataFrame(processed_data)
+            df_clima_futuro['fecha'] = pd.to_datetime(df_clima_futuro['fecha'])
+            df_clima_futuro.dropna(inplace=True) # Nos aseguramos de no tener nulos
+            
+            return df_clima_futuro
+            
+        else:
+            # Mostrar error de la API
+            st.error(f"Error en la API de Meteosource (Código {response.status_code}): {response.json().get('detail', 'Error desconocido')}")
+            return pd.DataFrame()
+            
+    except Exception as e:
+        st.error(f"Error al conectar con la API del clima: {e}")
+        return pd.DataFrame()
+
 def crear_features_temporales(df):
     """Crea columnas de features basadas en la fecha."""
     df['hora'] = df['fecha'].dt.hour
@@ -84,7 +134,7 @@ def crear_features_temporales(df):
     return df
 
 # --------------------------------------------------------------------------
-# |                      BARRA LATERAL (SIDEBAR)                          |
+# |                   BARRA LATERAL (SIDEBAR)                              |
 # --------------------------------------------------------------------------
 
 # Asegurarse de que el logo no cause un error si no se encuentra
@@ -97,43 +147,55 @@ else:
 st.sidebar.title("Configuración de la Predicción")
 st.sidebar.markdown("---")
 
-st.sidebar.header("1. Carga de Datos")
-st.sidebar.write("Sube los archivos CSV con los datos históricos y el pronóstico futuro.")
+st.sidebar.header("1. Carga de Datos Históricos")
+st.sidebar.write("Sube los archivos CSV con los datos históricos.")
 
 # --- Widgets para subir archivos ---
 energy_file = st.sidebar.file_uploader("Archivo de Consumo (Asepeyo)", type="csv")
 past_weather_file = st.sidebar.file_uploader("Archivo de Clima Histórico (NASA)", type="csv")
-future_weather_file = st.sidebar.file_uploader("Pronóstico de Temperatura Futuro (CSV Diario)", type="csv", help="Debe tener columnas: 'fecha', 'temp_max_c', 'temp_min_c'")
+
+st.sidebar.markdown("---")
+
+# --- MODIFICADO: Sección para la API ---
+st.sidebar.header("2. Configuración del Pronóstico (API)")
+st.sidebar.write("Introduce tu API Key y las coordenadas del centro.")
+
+api_key = st.sidebar.text_input("API Key de Meteosource", type="password", help="Tu API key (plan 'free' o superior).")
+lat = st.sidebar.text_input("Latitud", "40.4168", help="Ej. Madrid: 40.4168")
+lon = st.sidebar.text_input("Longitud", "-3.7038", help="Ej. Madrid: -3.7038")
 
 st.sidebar.markdown("---")
 
 # --- Variables adicionales ---
-st.sidebar.header("2. Variables Adicionales")
+st.sidebar.header("3. Variables Adicionales")
 ocupacion_media = st.sidebar.slider("Ocupación Media (%) del Centro", 0, 100, 80)
 
 # --------------------------------------------------------------------------
-# |                        CUERPO DE LA APLICACIÓN                          |
+# |                   CUERPO DE LA APLICACIÓN                              |
 # --------------------------------------------------------------------------
 
 st.title("Sistema de Inteligencia Energética con IA")
 st.subheader("Herramienta de Predicción de Consumo para Instalaciones de Asepeyo")
 st.markdown("---")
 
-if energy_file and past_weather_file and future_weather_file:
-    with st.spinner('Procesando datos y entrenando el modelo de IA...'):
+# --- MODIFICADO: Condición principal ---
+# Ahora comprobamos los archivos históricos y los campos de la API
+if energy_file and past_weather_file and api_key and lat and lon:
+    with st.spinner('Procesando datos, contactando API y entrenando el modelo de IA...'):
         
         # --- Carga y preparación de datos ---
         df_energia = load_asepeyo_energy_data(energy_file)
         df_clima_pasado = load_nasa_weather_data(past_weather_file)
         
-        try:
-            df_clima_futuro = pd.read_csv(future_weather_file, parse_dates=['fecha'])
-            if 'temp_max_c' not in df_clima_futuro.columns or 'temp_min_c' not in df_clima_futuro.columns:
-                 st.error("El archivo de pronóstico futuro debe tener las columnas 'temp_max_c' y 'temp_min_c'.")
-                 st.stop()
-        except Exception as e:
-            st.error(f"Error al leer el archivo de pronóstico futuro: {e}")
-            st.stop()
+        # --- MODIFICADO: Obtener pronóstico desde la API ---
+        df_clima_futuro = get_weather_forecast(api_key, lat, lon)
+        
+        # Si la API falló, df_clima_futuro estará vacío
+        if df_clima_futuro.empty:
+            st.error("No se pudo obtener el pronóstico del clima. Revisa tu API Key o las coordenadas e inténtalo de nuevo.")
+            st.stop() # Detiene la ejecución si no hay pronóstico
+            
+        # --- FIN DE LA MODIFICACIÓN ---
 
 
         if not df_energia.empty and not df_clima_pasado.empty:
@@ -146,6 +208,7 @@ if energy_file and past_weather_file and future_weather_file:
             df_historico['ocupacion'] = ocupacion_media
 
             # --- Preparar datos futuros ---
+            # El resto de tu lógica para interpolar de diario a horario funciona perfecto
             future_dates = pd.date_range(start=df_clima_futuro['fecha'].min(), end=df_clima_futuro['fecha'].max() + pd.Timedelta(days=1) - pd.Timedelta(hours=1), freq='h')
             df_futuro = pd.DataFrame({'fecha': future_dates})
             df_futuro['fecha_dia'] = pd.to_datetime(df_futuro['fecha'].dt.date)
@@ -153,6 +216,7 @@ if energy_file and past_weather_file and future_weather_file:
             df_futuro = pd.merge(df_futuro, df_clima_futuro[['fecha_dia', 'temp_min_c', 'temp_max_c']], on='fecha_dia', how='left')
             df_futuro.drop(columns=['fecha_dia'], inplace=True)
             
+            # Tu lógica de interpolación sinusoidal
             df_futuro['temperatura_c'] = df_futuro['temp_min_c'] + (df_futuro['temp_max_c'] - df_futuro['temp_min_c']) * np.sin(np.pi * (df_futuro['fecha'].dt.hour - 6) / 12)
             df_futuro['temperatura_c'].fillna(method='ffill', inplace=True)
             
@@ -210,10 +274,12 @@ if energy_file and past_weather_file and future_weather_file:
             st.dataframe(df_futuro[['fecha', 'temperatura_c', 'consumo_predicho_kwh']].round(2))
 
 else:
-    st.info("ℹ️ **Para comenzar**, por favor sube los tres archivos de datos en la barra lateral izquierda.")
+    # --- MODIFICADO: Mensaje de bienvenida ---
+    st.info("ℹ️ **Para comenzar**, por favor sube los dos archivos de datos históricos y completa la configuración de la API en la barra lateral izquierda.")
     st.markdown("""
-    Esta herramienta utiliza los datos que proporcionas para:
+    Esta herramienta utilizará los datos que proporcionas para:
     1.  **Aprender** los patrones de consumo de tu instalación usando los datos de Asepeyo y de la NASA.
-    2.  **Entrenar** un modelo de Inteligencia Artificial (Machine Learning).
-    3.  **Predecir** el consumo futuro basándose en el pronóstico meteorológico que subas.
+    2.  **Obtener** el pronóstico del tiempo más reciente usando la API de Meteosource.
+    3.  **Entrenar** un modelo de Inteligencia Artificial (Machine Learning).
+    4.  **Predecir** el consumo futuro basándose en ese pronóstico.
     """)
