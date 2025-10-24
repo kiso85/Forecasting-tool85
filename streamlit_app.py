@@ -194,7 +194,7 @@ ocupacion_media = st.sidebar.slider("Ocupación Media (%) del Centro", 0, 100, 8
 # |                   CUERPO DE LA APLICACIÓN (MODIFICADO)                 |
 # --------------------------------------------------------------------------
 
-st.title("Sistema de Inteligencia Energética con IA")
+st.title("Sistema de Inteligencia Energética con IA-Prophet")
 st.subheader("Herramienta de Predicción de Consumo para Instalaciones de Asepeyo")
 st.markdown("---")
 
