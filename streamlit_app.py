@@ -154,12 +154,13 @@ if selected_energy_file:
         # --- Mostrar resultados ---
         st.subheader("📈 Predicción de Consumo Energético (Prophet)")
         st.pyplot(model.plot(forecast))
-
+        
         st.subheader("📊 Componentes del modelo")
         st.pyplot(model.plot_components(forecast))
         
-        # --- Mostrar pronóstico en tabla ---
-        st.subheader("📋 Datos de Predicción (Resumen)")
+        # --- 交互式折线图 ---
+        st.subheader("📊 Gráfico Interactivo del Pronóstico")
+        
         forecast_display = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(future_days)
         forecast_display.rename(columns={
             'ds': 'Fecha',
@@ -167,11 +168,8 @@ if selected_energy_file:
             'yhat_lower': 'Intervalo_Inferior',
             'yhat_upper': 'Intervalo_Superior'
         }, inplace=True)
-        st.dataframe(forecast_display.round(2))
-
+        forecast_display['Fecha'] = forecast_display['Fecha'].dt.date  # 仅显示日期，不显示时间
         
-        # --- Gráfico interactivo con Plotly ---
-        st.subheader("📊 Gráfico Interactivo del Pronóstico")
         fig = px.line(
             forecast_display,
             x='Fecha',
@@ -181,6 +179,13 @@ if selected_energy_file:
             color_discrete_sequence=['royalblue']
         )
         st.plotly_chart(fig, use_container_width=True)
+        
+        # --- ✅ 勾选框：是否显示预测表格 ---
+        mostrar_tabla = st.checkbox("📋 Mostrar tabla de predicción detallada")
+        
+        if mostrar_tabla:
+            st.subheader("📋 Datos de Predicción (Resumen)")
+            st.dataframe(forecast_display.round(2))
 
         # --- API del clima (opcional) ---
         if api_key:
