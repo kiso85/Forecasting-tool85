@@ -258,11 +258,64 @@ if selected_energy_file and selected_weather_file and api_key and lat and lon:
                       st.error(f"Falta la columna de feature '{col}' en los datos futuros.")
                       st.stop()
 
-            X = df_historico_daily[features]
-            y = df_historico_daily[target]
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-            modelo = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
-            modelo.fit(X_train, y_train)
+            # =========================================
+            # 🔮 MODELO PROPHET (sustituye Random Forest)
+            # =========================================
+            
+            st.subheader("🔮 Modelo Prophet para Predicción de Consumo")
+            
+            # ---- Sidebar: incluir festivos ----
+            include_holidays = st.sidebar.checkbox(
+                "Incluir festivos de Cataluña en el modelo",
+                value=True,
+                help="Si se marca, el modelo Prophet incluirá los festivos de Cataluña (ES-CT)."
+            )
+            
+            # ---- Preparar datos ----
+            df_prophet = df_filtered[['datetime', 'Consumption_kWh']].rename(columns={
+                'datetime': 'ds',
+                'Consumption_kWh': 'y'
+            })
+            
+            # ---- Crear modelo ----
+            model = Prophet(
+                yearly_seasonality=True,
+                weekly_seasonality=True,
+                daily_seasonality=True,
+                changepoint_prior_scale=0.1
+            )
+            
+            # ---- Añadir festivos si el usuario lo marca ----
+            if include_holidays:
+                try:
+                    model.add_country_holidays(country_name='ES', province_name='CT')
+                    st.sidebar.success("✅ Incluidos los festivos de Cataluña en el modelo.")
+                except Exception as e:
+                    st.sidebar.warning(f"No se pudieron cargar los festivos de Cataluña: {e}")
+            else:
+                st.sidebar.info("Festivos no incluidos en el modelo.")
+            
+            # ---- Entrenar modelo ----
+            with st.spinner("Entrenando el modelo Prophet..."):
+                model.fit(df_prophet)
+            
+            # ---- Hacer predicción futura ----
+            # 这里默认预测未来 24 小时
+            future = model.make_future_dataframe(periods=24, freq='H')
+            forecast = model.predict(future)
+            
+            # ---- Mostrar resultados ----
+            st.subheader("📈 Predicción de consumo (Prophet)")
+            fig1 = model.plot(forecast)
+            st.pyplot(fig1)
+            
+            # ---- Mostrar descomposición (tendencias, estacionalidad, festivos) ----
+            st.subheader("📊 Componentes del modelo")
+            fig2 = model.plot_components(forecast)
+            st.pyplot(fig2)
+            
+            st.success("✅ Predicción completada con Prophet.")
+
 
             # --- Resultados (sin cambios) ---
             X_futuro = df_futuro[features]
