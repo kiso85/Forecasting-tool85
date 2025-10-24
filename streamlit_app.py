@@ -158,9 +158,10 @@ if selected_energy_file:
         st.subheader("📊 Componentes del modelo")
         st.pyplot(model.plot_components(forecast))
         
-        # --- 交互式折线图 ---
+        # --- Gráfico Interactivo del Pronóstico ---
         st.subheader("📊 Gráfico Interactivo del Pronóstico")
         
+        # 准备数据
         forecast_display = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(future_days)
         forecast_display.rename(columns={
             'ds': 'Fecha',
@@ -168,8 +169,9 @@ if selected_energy_file:
             'yhat_lower': 'Intervalo_Inferior',
             'yhat_upper': 'Intervalo_Superior'
         }, inplace=True)
-        forecast_display['Fecha'] = forecast_display['Fecha'].dt.date  # 仅显示日期，不显示时间
+        forecast_display['Fecha'] = forecast_display['Fecha'].dt.date  # 去掉时间部分
         
+        # 折线图
         fig = px.line(
             forecast_display,
             x='Fecha',
@@ -180,12 +182,13 @@ if selected_energy_file:
         )
         st.plotly_chart(fig, use_container_width=True)
         
-        # --- ✅ 勾选框：是否显示预测表格 ---
+        # ✅ 勾选框：控制是否显示预测表格
         mostrar_tabla = st.checkbox("📋 Mostrar tabla de predicción detallada")
         
         if mostrar_tabla:
             st.subheader("📋 Datos de Predicción (Resumen)")
             st.dataframe(forecast_display.round(2))
+
 
         # --- API del clima (opcional) ---
         if api_key:
