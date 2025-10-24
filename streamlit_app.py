@@ -157,7 +157,12 @@ if selected_energy_file:
 
         st.subheader("📊 Componentes del modelo")
         st.pyplot(model.plot_components(forecast))
-
+        
+        # --- Mostrar pronóstico en tabla ---
+        st.subheader("📋 Datos de Predicción (Resumen)")
+        forecast_display = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(future_days)
+       
+        st.dataframe(forecast_display.round(2))
         
         # --- Gráfico interactivo con Plotly ---
         st.subheader("📊 Gráfico Interactivo del Pronóstico")
