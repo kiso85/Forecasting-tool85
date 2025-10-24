@@ -123,9 +123,7 @@ if selected_energy_file:
     df_energia = load_asepeyo_energy_data(energy_path)
 
     if not df_energia.empty:
-        st.success("✅ Datos de consumo cargados correctamente.")
-        st.write(f"Total de registros: {len(df_energia)}")
-        st.dataframe(df_energia.head())
+        
 
         # --- Preparar datos para Prophet ---
         df_prophet = df_energia.rename(columns={'fecha': 'ds', 'consumo_kwh': 'y'})
@@ -171,6 +169,18 @@ if selected_energy_file:
         }, inplace=True)
         st.dataframe(forecast_display.round(2))
 
+        
+        # --- Gráfico interactivo con Plotly ---
+        st.subheader("📊 Gráfico Interactivo del Pronóstico")
+        fig = px.line(
+            forecast_display,
+            x='Fecha',
+            y='Consumo_Predicho',
+            title="Predicción del Consumo Energético (Próximos Días)",
+            labels={'Consumo_Predicho': 'Consumo (kWh)'},
+            color_discrete_sequence=['royalblue']
+        )
+        st.plotly_chart(fig, use_container_width=True)
 
         # --- API del clima (opcional) ---
         if api_key:
