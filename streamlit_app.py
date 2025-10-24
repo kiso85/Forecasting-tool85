@@ -171,17 +171,6 @@ if selected_energy_file:
         }, inplace=True)
         st.dataframe(forecast_display.round(2))
 
-        # --- Gráfico interactivo con Plotly ---
-        st.subheader("📊 Gráfico Interactivo del Pronóstico")
-        fig = px.line(
-            forecast_display,
-            x='Fecha',
-            y='Consumo_Predicho',
-            title="Predicción del Consumo Energético (Próximos Días)",
-            labels={'Consumo_Predicho': 'Consumo (kWh)'},
-            color_discrete_sequence=['royalblue']
-        )
-        st.plotly_chart(fig, use_container_width=True)
 
         # --- API del clima (opcional) ---
         if api_key:
