@@ -191,6 +191,14 @@ if selected_energy_file:
             RMSE = np.sqrt(MSE)
         
             st.success(f"✅ Mean Squared Error (MSE): **{MSE:.2f}**  Root MSE (RMSE): **{RMSE:.2f}**")
+            # 🧠 Interpret the RMSE result in plain language
+            if RMSE < 20:
+                st.info(f"💡 El modelo es muy preciso: el error medio diario es de solo {RMSE:.1f} kWh, lo que representa una excelente predicción.")
+            elif RMSE < 50:
+                st.warning(f"⚠️ El modelo tiene una precisión moderada: el error medio diario es de aproximadamente {RMSE:.1f} kWh.")
+            else:
+                st.error(f"❌ El modelo tiene una alta variabilidad: el error medio diario es de alrededor de {RMSE:.1f} kWh, se recomienda revisar los parámetros o la calidad de los datos.")
+
         
             # Plot predicted vs actual for test window
             import plotly.graph_objects as go
