@@ -150,6 +150,8 @@ if selected_energy_file:
         # --- Crear fechas futuras y predecir ---
         future = model.make_future_dataframe(periods=future_days)
         forecast = model.predict(future)
+
+        st.warning("🔧 Accuracy test block loaded")
         # --------------------------------------------------------------------------
         # ✅ Optional Model Accuracy Test (Hold-out)
         # --------------------------------------------------------------------------
