@@ -114,7 +114,7 @@ include_holidays = st.sidebar.checkbox("Incluir festivos de España (ES)", value
 # |                   CUERPO PRINCIPAL                                     |
 # --------------------------------------------------------------------------
 
-st.title("🔮 Predicción de Consumo Energético con Prophet")
+st.title("🎀 Predicción de Consumo Energético con Prophet")
 st.subheader("Modelo de Series Temporales para Instalaciones de Asepeyo")
 st.markdown("---")
 # ✅ Visual confirmation that this version of the app has loaded
