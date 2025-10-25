@@ -150,6 +150,64 @@ if selected_energy_file:
         # --- Crear fechas futuras y predecir ---
         future = model.make_future_dataframe(periods=future_days)
         forecast = model.predict(future)
+        # --------------------------------------------------------------------------
+        # ✅ Optional Model Accuracy Test (Hold-out)
+        # --------------------------------------------------------------------------
+        st.markdown("---")
+        check_accuracy = st.checkbox("🧪 Check Model Accuracy (Hold-out Test)")
+        
+        if check_accuracy:
+            st.subheader("📊 Prophet Model Accuracy Test")
+        
+            # Split: last 90 days of data as test
+            horizon_days = st.number_input("Days to hold out for testing", 30, 180, 90)
+            cutoff_date = df_prophet['ds'].max() - pd.Timedelta(days=horizon_days)
+            train = df_prophet[df_prophet['ds'] <= cutoff_date]
+            test  = df_prophet[df_prophet['ds'] >  cutoff_date]
+        
+            st.write(f"Training data: {train['ds'].min().date()} → {train['ds'].max().date()}")
+            st.write(f"Testing data: {test['ds'].min().date()} → {test['ds'].max().date()}")
+        
+            # Train Prophet on training data
+            acc_model = Prophet(
+                yearly_seasonality=True,
+                weekly_seasonality=True,
+                daily_seasonality=False,
+                changepoint_prior_scale=0.1
+            )
+            acc_model.fit(train)
+        
+            # Predict for the test period
+            future_test = acc_model.make_future_dataframe(periods=horizon_days, freq='D')
+            forecast_test = acc_model.predict(future_test)
+        
+            # Compare only overlapping period
+            pred = forecast_test[['ds', 'yhat']].merge(test, on='ds', how='inner')
+            pred['squared_error'] = (pred['yhat'] - pred['y']) ** 2
+        
+            MSE  = np.mean(pred['squared_error'])
+            RMSE = np.sqrt(MSE)
+        
+            st.success(f"✅ Mean Squared Error (MSE): **{MSE:.2f}**  Root MSE (RMSE): **{RMSE:.2f}**")
+        
+            # Plot predicted vs actual for test window
+            import plotly.graph_objects as go
+            fig_acc = go.Figure()
+            fig_acc.add_trace(go.Scatter(
+                x=test['ds'], y=test['y'],
+                mode='lines+markers', name='Actual', line=dict(color='black')
+            ))
+            fig_acc.add_trace(go.Scatter(
+                x=pred['ds'], y=pred['yhat'],
+                mode='lines+markers', name='Predicted', line=dict(color='royalblue')
+            ))
+            fig_acc.update_layout(
+                title="Actual vs Predicted Energy Consumption (Validation Period)",
+                xaxis_title="Date", yaxis_title="Consumption (kWh)",
+                plot_bgcolor="#FFFFFF", paper_bgcolor="#FFFFFF",
+                xaxis=dict(gridcolor="#E0E0E0"), yaxis=dict(gridcolor="#E0E0E0")
+            )
+            st.plotly_chart(fig_acc, use_container_width=True)
 
         # --- Mostrar resultados ---
         st.subheader("📈 Predicción de Consumo Energético (Prophet)")
