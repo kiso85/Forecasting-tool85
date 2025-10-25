@@ -15,7 +15,7 @@ import glob
 # --------------------------------------------------------------------------
 st.set_page_config(
     page_title="Predicción de Consumo Energético con Prophet",
-    page_icon="🔮",
+    page_icon="🎀",
     layout="wide",
     initial_sidebar_state="expanded"
 )
