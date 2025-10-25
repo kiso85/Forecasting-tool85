@@ -197,6 +197,8 @@ ocupacion_media = st.sidebar.slider("Ocupación Media (%) del Centro", 0, 100, 8
 st.title("Sistema de Inteligencia Energética con IA")
 st.subheader("Herramienta de Predicción de Consumo para Instalaciones de Asepeyo")
 st.markdown("---")
+# ✅ Visual confirmation that this version of the app has loaded
+st.success("✅ Accuracy test feature loaded successfully — you are running the latest version of the app.")
 
 # --- MODIFICADO: Comprobar si los archivos fueron seleccionados ---
 if selected_energy_file and selected_weather_file and api_key and lat and lon:
