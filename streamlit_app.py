@@ -155,7 +155,7 @@ if selected_energy_file:
         # --------------------------------------------------------------------------
         # ✅ Optional Model Accuracy Test (Hold-out)
         # --------------------------------------------------------------------------
-        st.markdown("---")
+    
         check_accuracy = st.checkbox("🧪 Check Model Accuracy (Hold-out Test)")
         
         if check_accuracy:
