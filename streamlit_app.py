@@ -61,12 +61,20 @@ holiday_df = make_holiday_df(df["ds"].dt.year.min(), df["ds"].dt.year.max() + 1)
 @st.cache_resource
 def train_model(df, holidays):
     model = Prophet(
-        daily_seasonality=True,     # hourly inside day
-        weekly_seasonality=True,    # Mon -> Sun
-        yearly_seasonality=True,    # long-term
-        holidays=holidays,
-        seasonality_mode="multiplicative"
+    daily_seasonality=False,   # we will replace default
+    weekly_seasonality=True,
+    yearly_seasonality=True,
+    holidays=holidays,
+    seasonality_mode="multiplicative"
     )
+
+    # ✔ custom daily seasonality with higher fourier_order
+    model.add_seasonality(
+        name="daily",
+        period=24,
+        fourier_order=20      # ← KEY: captures morning+afternoon peaks
+    )
+
 
     model.add_seasonality(name="monthly", period=30.5, fourier_order=5)
     model.fit(df)
