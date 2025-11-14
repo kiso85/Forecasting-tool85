@@ -9,23 +9,31 @@ st.set_page_config(page_title="EPSEVG Hourly Energy Forecast", layout="wide")
 
 st.title("⚡ EPSEVG Hourly Energy Consumption Forecast (Prophet)")
 
-DATA_DIR = Path(__file__).parent
+# -----------------------------------
+# File path setup
+# -----------------------------------
+BASE_DIR = Path(__file__).parent
+DATA_FILE = BASE_DIR / "data" / "energy_Via-Ag-36.csv"   # ✔ YOUR FILE
 
 # -----------------------------------
 # Load hourly dataset
 # -----------------------------------
 @st.cache_data
 def load_data():
-    df = pd.read_csv(DATA_DIR / "df_hourly_processed.csv")
+    df = pd.read_csv(DATA_FILE)
 
-    # Standardize column names
+    # Detect date column
     date_col = [c for c in df.columns if "fecha" in c.lower() or "date" in c.lower()][0]
-    energy_col = [c for c in df.columns if "energy" in c.lower() or "energ" in c.lower()][0]
+    energy_col = [c for c in df.columns if "energy" in c.lower() 
+                  or "energ" in c.lower()][0]
 
-    df["ds"] = pd.to_datetime(df[date_col], format="%d/%m/%Y %H:%M")
+    # Parse format: DD/MM/YYYY HH:MM
+    df["ds"] = pd.to_datetime(df[date_col], format="%d/%m/%Y %H:%M", errors="coerce")
     df["y"] = df[energy_col].astype(float)
 
-    df = df[["ds", "y"]].sort_values("ds")
+    # Clean + sort
+    df = df[["ds", "y"]].dropna().sort_values("ds")
+
     return df
 
 df = load_data()
@@ -36,10 +44,11 @@ df = load_data()
 def make_holiday_df(start_year=2020, end_year=2025):
     holidays = []
     for year in range(start_year, end_year + 1):
-        for d in ["01-01", "01-06", "05-01", "08-15", "10-12", "11-01", "12-06", "12-08", "12-25"]:
+        for d in ["01-01", "01-06", "05-01", "08-15",
+                  "10-12", "11-01", "12-06", "12-08", "12-25"]:
             holidays.append({"holiday": "spain_public", "ds": f"{year}-{d}"})
 
-        # July–August summer school break
+        # School summer break (July–August)
         for m in [7, 8]:
             for day in range(1, 32):
                 holidays.append({"holiday": "summer_break", "ds": f"{year}-{m:02d}-{day:02d}"})
@@ -54,9 +63,9 @@ holiday_df = make_holiday_df(df["ds"].dt.year.min(), df["ds"].dt.year.max() + 1)
 @st.cache_resource
 def train_hourly_prophet(df, holidays):
     m = Prophet(
-        daily_seasonality=True,      # Hourly pattern within a day
-        weekly_seasonality=True,     # Mon–Sun weekly cycle
-        yearly_seasonality=True,     # Seasonal energy variations
+        daily_seasonality=True,      # captures hourly pattern inside a day
+        weekly_seasonality=True,     # captures Mon–Sun pattern
+        yearly_seasonality=True,     # long-term trend
         holidays=holidays,
         seasonality_mode="multiplicative"
     )
@@ -70,7 +79,7 @@ model = train_hourly_prophet(df, holiday_df)
 # -----------------------------------
 # Forecast horizon
 # -----------------------------------
-horizon_option = st.selectbox(
+horizon_label = st.selectbox(
     "Select forecast horizon:",
     {
         "Next 24 hours": 24,
@@ -80,16 +89,16 @@ horizon_option = st.selectbox(
     }
 )
 
-horizon_hours = horizon_option
+horizon_hours = horizon_label
 
 # -----------------------------------
-# Generate hourly forecast
+# Generate forecast (hourly)
 # -----------------------------------
 future = model.make_future_dataframe(periods=horizon_hours, freq="H")
 forecast = model.predict(future)
 
 # -----------------------------------
-# Plot
+# Plot forecast + history
 # -----------------------------------
 fig = px.line(
     forecast,
@@ -103,8 +112,7 @@ fig.add_scatter(
     x=df["ds"],
     y=df["y"],
     name="Historical",
-    mode="lines",
-    line=dict(color="blue", width=1.5)
+    line=dict(color="blue", width=1.3)
 )
 
 st.plotly_chart(fig, use_container_width=True)
@@ -113,14 +121,11 @@ st.plotly_chart(fig, use_container_width=True)
 # Notes
 # -----------------------------------
 st.caption("""
-This hourly forecast model uses **Facebook Prophet** to learn:
-- Hour-of-day patterns (daily seasonality)
-- Monday high consumption spike
-- Tuesday–Friday stable high working cycle
-- Saturday + Sunday low consumption
-- Spanish national holidays
+This model learns from HOURLY energy data to accurately capture:
+- Monday consumption spike
+- Tuesday–Friday high and stable work cycle
+- Saturday & Sunday low consumption
+- Hourly patterns within each day (e.g., daytime vs nighttime)
+- Spanish public holidays
 - Summer school break (July–August)
-
-Because the model is trained on hourly data, the forecast reflects the true
-hourly behaviour of the building.
 """)
