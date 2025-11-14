@@ -178,13 +178,19 @@ if selected_energy_file:
             df_prophet_train['hour_cos'] = np.cos(2 * np.pi * df_prophet_train['hour'] / 24.0)
 
             # ----------------------- Build Prophet -----------------------
-            model = Prophet(
+            m = Prophet(
                 yearly_seasonality=True,
                 weekly_seasonality=True,
-                daily_seasonality=True,
-                seasonality_mode='additive',
-                changepoint_prior_scale=0.1
+                daily_seasonality=False    # ❌ 先关闭默认 daily，避免 W 型
             )
+            
+            # 添加自定义 M 型 daily seasonality：一个主峰、一条副峰
+            m.add_seasonality(
+                name='daily_m_shape',
+                period=24,
+                fourier_order=4     # ↩ 4 可以产生双峰 + 中午低谷
+            )
+
 
             # add regressors
             model.add_regressor('hour_sin')
@@ -283,14 +289,14 @@ if selected_energy_file:
             })
             
             # ------------------ 修复 1:00 凸起问题 + 强制非负 ------------------
-            # 先裁掉所有负值（Prophet 常会给少量负值）
+            # 裁剪负值
             forecast_display['Consumo_Predicho'] = forecast_display['Consumo_Predicho'].clip(lower=0)
             
-            # 使用 3 点滚动均值平滑去除 1:00 边缘凸起
-            forecast_display['Consumo_Predicho_Suavizado'] = (
+            # 删除午夜噪声前后的尖点（Prophet 常在 00:00–02:00 有异常）
+            forecast_display['Consumo_Predicho'] = (
                 forecast_display['Consumo_Predicho']
-                .rolling(window=3, center=True, min_periods=1)
-                .mean()
+                .rolling(window=5, center=True, min_periods=1)
+                .median()
             )
             
             # Plotly 图表显示平滑后的值
