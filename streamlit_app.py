@@ -1,138 +1,210 @@
+# --------------------------------------------------------------------------
+# |                   IMPORTAR LIBRERÍAS                                   |
+# --------------------------------------------------------------------------
 import streamlit as st
 import pandas as pd
 import numpy as np
 from prophet import Prophet
 import plotly.express as px
-from pathlib import Path
+import requests
+import os
+import glob
 
-st.set_page_config(page_title="EPSEVG Hourly Energy Forecast", layout="wide")
+# --------------------------------------------------------------------------
+# |                   CONFIGURACIÓN DE LA PÁGINA                           |
+# --------------------------------------------------------------------------
+st.set_page_config(
+    page_title="Predicción de Consumo Energético con Prophet",
+    page_icon="🎀",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-st.title("⚡ EPSEVG Hourly Energy Forecast (Prophet)")
+# --------------------------------------------------------------------------
+# |                   FUNCIONES DE CARGA DE DATOS                          |
+# --------------------------------------------------------------------------
 
-# ----------------------------------------------------------
-# 1. File paths
-# ----------------------------------------------------------
-BASE_DIR = Path(__file__).parent
-DATA_FILE = BASE_DIR / "data" / "energy_Via-Ag-36.csv"      # your file
-
-# ----------------------------------------------------------
-# 2. Load hourly energy dataset
-# ----------------------------------------------------------
 @st.cache_data
-def load_data():
-    df = pd.read_csv(DATA_FILE)
-
-    # Auto-detect columns
-    date_col = [c for c in df.columns if "fecha" in c.lower() or "date" in c.lower()][0]
-    energy_col = [c for c in df.columns if "energy" in c.lower() or "energ" in c.lower()][0]
-
-    # Parse datetime format: DD/MM/YYYY HH:MM
-    df["ds"] = pd.to_datetime(df[date_col], format="%d/%m/%Y %H:%M", errors="coerce")
-    df["y"] = df[energy_col].astype(float)
-
-    df = df[["ds", "y"]].dropna().sort_values("ds")
-    return df
-
-df = load_data()
-
-# ----------------------------------------------------------
-# 3. Build Spain + School holiday table
-# ----------------------------------------------------------
-def make_holiday_df(start_year, end_year):
-    holidays = []
-    for year in range(start_year, end_year + 1):
-        # Spain national holidays
-        for d in ["01-01", "01-06", "05-01", "08-15",
-                  "10-12", "11-01", "12-06", "12-08", "12-25"]:
-            holidays.append({"holiday": "spain_public", "ds": f"{year}-{d}"})
-
-        # School summer vacation
-        for m in [7, 8]:
-            for day in range(1, 32):
-                holidays.append({"holiday": "summer_break", "ds": f"{year}-{m:02d}-{day:02d}"})
-
-    return pd.DataFrame(holidays)
-
-holiday_df = make_holiday_df(df["ds"].dt.year.min(), df["ds"].dt.year.max() + 1)
-
-# ----------------------------------------------------------
-# 4. Train Prophet hourly model
-# ----------------------------------------------------------
-@st.cache_resource
-def train_model(df, holidays):
-    model = Prophet(
-    daily_seasonality=False,   # we will replace default
-    weekly_seasonality=True,
-    yearly_seasonality=True,
-    holidays=holidays,
-    seasonality_mode="multiplicative"
-    )
-
-    # ✔ custom daily seasonality with higher fourier_order
-    model.add_seasonality(
-        name="daily",
-        period=24,
-        fourier_order=20      # ← KEY: captures morning+afternoon peaks
-    )
+def load_asepeyo_energy_data(file_path):
+    """Carga y procesa el archivo de consumo energético desde una ruta."""
+    try:
+        df = pd.read_csv(file_path, sep=',', decimal='.')
+        if 'Fecha' not in df.columns or 'Energía activa (kWh)' not in df.columns:
+            st.error(f"El archivo {file_path} debe contener 'Fecha' y 'Energía activa (kWh)'.")
+            return pd.DataFrame()
+            
+        df.rename(columns={'Fecha': 'fecha', 'Energía activa (kWh)': 'consumo_kwh'}, inplace=True)
+        df['fecha'] = pd.to_datetime(df['fecha'], dayfirst=True)
+        return df
+    except Exception as e:
+        st.error(f"Error al procesar el archivo: {e}")
+        return pd.DataFrame()
 
 
-    model.add_seasonality(name="monthly", period=30.5, fourier_order=5)
-    model.fit(df)
-    return model
+@st.cache_data
+def get_weather_forecast(api_key, lat, lon):
+    """Obtiene el pronóstico del tiempo diario desde la API de Meteosource."""
+    BASE_URL = "https://www.meteosource.com/api/v1/free/point"
+    params = {
+        "lat": lat,
+        "lon": lon,
+        "sections": "daily",
+        "units": "metric",
+        "key": api_key
+    }
+    try:
+        response = requests.get(BASE_URL, params=params)
+        if response.status_code == 200:
+            data = response.json()
+            daily_data = data.get('daily', {}).get('data', [])
+            if not daily_data:
+                st.warning("⚠️ La API no devolvió datos de pronóstico diario.")
+                return pd.DataFrame()
+            df = pd.DataFrame([{
+                'fecha': day['day'],
+                'temp_max_c': day['all_day']['temperature_max'],
+                'temp_min_c': day['all_day']['temperature_min']
+            } for day in daily_data])
+            df['fecha'] = pd.to_datetime(df['fecha'])
+            df['temp_avg_c'] = (df['temp_max_c'] + df['temp_min_c']) / 2
+            return df
+        else:
+            st.error(f"Error en la API de Meteosource (Código {response.status_code})")
+            return pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error al conectar con la API del clima: {e}")
+        return pd.DataFrame()
 
-model = train_model(df, holiday_df)
+# --------------------------------------------------------------------------
+# |                   BARRA LATERAL DE CONFIGURACIÓN                       |
+# --------------------------------------------------------------------------
 
-# ----------------------------------------------------------
-# 5. Forecast Horizon  ( <-- FIXED DEFINITON HERE )
-# ----------------------------------------------------------
-horizon_options = {
-    "Next 24 hours": 24,
-    "Next 48 hours": 48,
-    "Next 7 days": 24 * 7,
-    "Next 14 days": 24 * 14
-}
+st.sidebar.title("⚙️ Configuración de la Predicción")
+st.sidebar.markdown("---")
 
-horizon_label = st.selectbox("Select forecast horizon:", list(horizon_options.keys()))
-horizon_hours = horizon_options[horizon_label]  # Always integer
+# Directorio de datos
+try:
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+except NameError:
+    SCRIPT_DIR = os.path.abspath('.')
 
-# ----------------------------------------------------------
-# 6. Generate Forecast (Hourly)
-# ----------------------------------------------------------
-future = model.make_future_dataframe(periods=horizon_hours, freq="H")
-forecast = model.predict(future)
+DATA_DIR = os.path.join(SCRIPT_DIR, "data")
+st.sidebar.info(f"📁 Carpeta de datos: {DATA_DIR}")
 
-# ----------------------------------------------------------
-# 7. Plot forecast + historical
-# ----------------------------------------------------------
-fig = px.line(
-    forecast,
-    x="ds",
-    y="yhat",
-    title=f"EPSEVG Forecast for {horizon_hours} Hours",
-    labels={"ds": "Date-Time", "yhat": "Predicted Energy (kWh)"}
-)
+# Selección de archivo
+energy_pattern = os.path.join(DATA_DIR, "energy_*.csv")
+energy_files = [os.path.basename(f) for f in glob.glob(energy_pattern)]
+selected_energy_file = st.sidebar.selectbox("Selecciona archivo de consumo", energy_files) if energy_files else None
 
-fig.add_scatter(
-    x=df["ds"],
-    y=df["y"],
-    name="Historical",
-    mode="lines",
-    line=dict(color="blue", width=1.5)
-)
+st.sidebar.markdown("---")
 
-st.plotly_chart(fig, use_container_width=True)
+# Parámetros de API (opcional)
+st.sidebar.header("🌤️ API Meteosource (opcional)")
+api_key = st.sidebar.text_input("API Key de Meteosource", type="password")
+lat = st.sidebar.text_input("Latitud", "40.4168")
+lon = st.sidebar.text_input("Longitud", "-3.7038")
 
-# ----------------------------------------------------------
-# 8. Footer
-# ----------------------------------------------------------
-st.caption("""
-This hourly forecast is powered by Facebook Prophet.
+# Parámetros del modelo
+st.sidebar.markdown("---")
+st.sidebar.header("🧠 Parámetros del Modelo Prophet")
+future_days = st.sidebar.slider("Días a predecir", 7, 90, 30)
+future_hours = future_days * 24
+include_holidays = st.sidebar.checkbox("Incluir festivos de España (ES)", value=True)
 
-The model learns:
-- Monday morning consumption surge
-- Tue–Fri stable high levels
-- Saturday & Sunday sharp decrease
-- Hour-of-day patterns (day vs night)
-- Spain public holidays
-- Summer school break (Jul–Aug)
-""")
+# --------------------------------------------------------------------------
+# |                   CUERPO PRINCIPAL                                     |
+# --------------------------------------------------------------------------
+
+st.title("🎀 Predicción de Consumo Energético (Hourly) 🎀")
+st.subheader("Modelo Prophet con resolución de 1 hora")
+st.markdown("---")
+
+if selected_energy_file:
+    energy_path = os.path.join(DATA_DIR, selected_energy_file)
+    df_energia = load_asepeyo_energy_data(energy_path)
+
+    if not df_energia.empty:
+
+        # ----------------------------------------------------------------------
+        # 🔄 NUEVO: Convertir datos diarios a datos HORARIOS
+        # ----------------------------------------------------------------------
+        df_energia = df_energia.set_index("fecha").sort_index()
+
+        # Resample HOURLY (Prophet necesita serie continua)
+        df_hourly = df_energia['consumo_kwh'].resample("1H").interpolate()
+
+        df_prophet = df_hourly.reset_index().rename(columns={"fecha": "ds", "consumo_kwh": "y"})
+
+        # ----------------------------------------------------------------------
+        # 🔒 NUEVO: Filtrar SOLO 2023-07-01 → 2024-07-01 para entrenar
+        # ----------------------------------------------------------------------
+        df_prophet = df_prophet[(df_prophet["ds"] >= "2023-07-01") & (df_prophet["ds"] < "2024-07-01")]
+
+        # --- Crear y entrenar el modelo ---
+        model = Prophet(
+            yearly_seasonality=True,
+            weekly_seasonality=True,
+            daily_seasonality=True,   # 🔄 cambiar a True para patrones intradía
+            changepoint_prior_scale=0.1
+        )
+
+        if include_holidays:
+            try:
+                model.add_country_holidays(country_name='ES')
+                st.sidebar.success("✅ Festivos de España añadidos.")
+            except Exception as e:
+                st.sidebar.warning(f"No se pudieron añadir festivos: {e}")
+
+        with st.spinner("Entrenando modelo Prophet (hourly)..."):
+            model.fit(df_prophet)
+
+        # ----------------------------------------------------------------------
+        # ⏳ NUEVO: Predicción HORARIA
+        # ----------------------------------------------------------------------
+        future = model.make_future_dataframe(periods=future_hours, freq="H")
+        forecast = model.predict(future)
+
+        # --- Mostrar resultados ---
+        st.subheader("📈 Predicción de Consumo Energético (HORARIA)")
+        st.pyplot(model.plot(forecast))
+
+        st.subheader("📊 Componentes del modelo")
+        st.pyplot(model.plot_components(forecast))
+
+        # --- Gráfico Interactivo ---
+        st.subheader("📊 Gráfico Interactivo del Pronóstico (Hourly)")
+
+        forecast_display = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(future_hours)
+        forecast_display["Fecha"] = forecast_display["ds"]
+
+        fig = px.line(
+            forecast_display,
+            x='Fecha',
+            y='yhat',
+            title="Predicción Horaria del Consumo (Próximas horas)",
+            labels={'yhat': 'Consumo (kWh)'},
+            color_discrete_sequence=['royalblue']
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        mostrar_tabla = st.checkbox("📋 Mostrar tabla de predicción detallada (hourly)")
+        if mostrar_tabla:
+            st.dataframe(forecast_display.round(2))
+
+        # --- API del clima (opcional) ---
+        if api_key:
+            st.markdown("---")
+            st.subheader("🌦️ Pronóstico del clima (Meteosource)")
+            df_clima_futuro = get_weather_forecast(api_key, lat, lon)
+            if not df_clima_futuro.empty:
+                st.dataframe(df_clima_futuro)
+                fig_temp = px.line(df_clima_futuro, x='fecha', y='temp_avg_c',
+                                   title='Temperatura Promedio Prevista (°C)')
+                st.plotly_chart(fig_temp, use_container_width=True)
+            else:
+                st.warning("No se pudo obtener datos del clima. Verifica tu API Key.")
+
+    else:
+        st.error("❌ No se pudieron cargar los datos de consumo.")
+else:
+    st.info("ℹ️ Selecciona un archivo CSV de energía en la barra lateral izquierda para comenzar.")
