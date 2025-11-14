@@ -131,7 +131,14 @@ if selected_energy_file:
         df_energia = df_energia.set_index("fecha").sort_index()
 
         # Resample HOURLY (Prophet necesita serie continua)
-        df_hourly = df_energia['consumo_kwh'].resample("1H").interpolate()
+        
+        # ---- FIX: remove duplicate timestamps (mandatory for resample) ----
+        df_energia = df_energia[~df_energia.index.duplicated(keep="first")]
+        df_energia = df_energia.sort_index()
+        
+        # ---- hourly resample ----
+        df_hourly = df_energia['consumo_kwh'].resample("1H").mean().interpolate()
+
 
         df_prophet = df_hourly.reset_index().rename(columns={"fecha": "ds", "consumo_kwh": "y"})
 
