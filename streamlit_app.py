@@ -269,8 +269,7 @@ if selected_energy_file:
             st.subheader("📈 Predicción de Consumo Energético (HORARIA)")
             st.pyplot(model.plot(forecast))
 
-            st.subheader("📊 Componentes del modelo")
-            st.pyplot(model.plot_components(forecast))
+           
 
             # ----------------------- Interactive forecast plot (hourly) -----------------------
             st.subheader("📊 Gráfico Interactivo del Pronóstico (Hourly)")
