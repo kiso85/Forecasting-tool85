@@ -272,7 +272,50 @@ if selected_energy_file:
 
             # ----------------------- Show results: Prophet plots -----------------------
             st.subheader("📈 Predicción de Consumo Energético (HORARIA)")
-            st.pyplot(m.plot(forecast))  # 修正：使用 m 而不是 model
+            
+            # 使用Plotly创建交互式图表
+            fig = go.Figure()
+            
+            # 添加实际值（黑色）
+            fig.add_trace(go.Scatter(
+                x=df_prophet_train['ds'],
+                y=df_prophet_train['y'],
+                mode='lines',
+                name='Consumo Real',
+                line=dict(color='black', width=1),
+                opacity=0.7
+            ))
+            
+            # 添加预测值（蓝色）
+            fig.add_trace(go.Scatter(
+                x=forecast['ds'],
+                y=forecast['yhat'],
+                mode='lines',
+                name='Predicción',
+                line=dict(color='blue', width=1.5)
+            ))
+            
+            # 添加置信区间
+            fig.add_trace(go.Scatter(
+                x=forecast['ds'].tolist() + forecast['ds'].tolist()[::-1],
+                y=forecast['yhat_upper'].tolist() + forecast['yhat_lower'].tolist()[::-1],
+                fill='toself',
+                fillcolor='rgba(0, 100, 255, 0.2)',
+                line=dict(color='rgba(255,255,255,0)'),
+                name='Intervalo de Confianza',
+                showlegend=True
+            ))
+            
+            # 更新布局
+            fig.update_layout(
+                title='Predicción de Consumo Energético (HORARIA)',
+                xaxis_title='Fecha',
+                yaxis_title='Consumo (kWh)',
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                hovermode='x unified'
+            )
+            
+            st.plotly_chart(fig, use_container_width=True)
 
             # ----------------------- Interactive forecast plot (hourly) -----------------------
             st.subheader("📊 Gráfico Interactivo del Pronóstico (Hourly)")
