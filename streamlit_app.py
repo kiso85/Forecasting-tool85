@@ -181,41 +181,40 @@ if selected_energy_file:
             m = Prophet(
                 yearly_seasonality=True,
                 weekly_seasonality=True,
-                daily_seasonality=False    # ❌ 先关闭默认 daily，避免 W 型
+                daily_seasonality=False    # 关闭默认 daily
             )
             
-            # 添加自定义 M 型 daily seasonality：一个主峰、一条副峰
+            # 添加自定义 M 型 daily seasonality
             m.add_seasonality(
                 name='daily_m_shape',
                 period=24,
-                fourier_order=4     # ↩ 4 可以产生双峰 + 中午低谷
+                fourier_order=4
             )
 
-
-            # add regressors
-            model.add_regressor('hour_sin')
-            model.add_regressor('hour_cos')
-            model.add_regressor('is_weekend')
+            # add regressors - 修正：使用 m 而不是 model
+            m.add_regressor('hour_sin')
+            m.add_regressor('hour_cos')
+            m.add_regressor('is_weekend')
 
             if include_holidays:
                 try:
-                    model.add_country_holidays(country_name='ES')
+                    m.add_country_holidays(country_name='ES')  # 这里也要用 m
                     st.sidebar.success("✅ Festivos de España añadidos.")
                 except Exception as e:
                     st.sidebar.warning(f"No se pudieron añadir festivos: {e}")
 
             with st.spinner("Entrenando Prophet (hourly) con regresores..."):
-                model.fit(df_prophet_train)
+                m.fit(df_prophet_train)  # 这里也要用 m
 
             # ----------------------- Future dataframe and regressors -----------------------
-            future = model.make_future_dataframe(periods=future_hours, freq='H')
+            future = m.make_future_dataframe(periods=future_hours, freq='H')  # 这里也要用 m
             # ensure regressors on future
             future['hour'] = future['ds'].dt.hour
             future['is_weekend'] = (future['ds'].dt.dayofweek >= 5).astype(int)
             future['hour_sin'] = np.sin(2 * np.pi * future['hour'] / 24.0)
             future['hour_cos'] = np.cos(2 * np.pi * future['hour'] / 24.0)
 
-            forecast = model.predict(future)
+            forecast = m.predict(future)  # 这里也要用 m
 
             # ----------------------- Accuracy check (hourly hold-out if requested) -----------------------
             if check_accuracy:
@@ -273,9 +272,7 @@ if selected_energy_file:
 
             # ----------------------- Show results: Prophet plots -----------------------
             st.subheader("📈 Predicción de Consumo Energético (HORARIA)")
-            st.pyplot(model.plot(forecast))
-
-           
+            st.pyplot(m.plot(forecast))  # 修正：使用 m 而不是 model
 
             # ----------------------- Interactive forecast plot (hourly) -----------------------
             st.subheader("📊 Gráfico Interactivo del Pronóstico (Hourly)")
@@ -293,7 +290,7 @@ if selected_energy_file:
             forecast_display['Consumo_Predicho'] = forecast_display['Consumo_Predicho'].clip(lower=0)
             
             # 删除午夜噪声前后的尖点（Prophet 常在 00:00–02:00 有异常）
-            forecast_display['Consumo_Predicho'] = (
+            forecast_display['Consumo_Predicho_Suavizado'] = (
                 forecast_display['Consumo_Predicho']
                 .rolling(window=5, center=True, min_periods=1)
                 .median()
