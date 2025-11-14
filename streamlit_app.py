@@ -273,26 +273,51 @@ if selected_energy_file:
 
             # ----------------------- Interactive forecast plot (hourly) -----------------------
             st.subheader("📊 Gráfico Interactivo del Pronóstico (Hourly)")
+            
             forecast_display = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(future_hours).copy()
-            forecast_display = forecast_display.rename(columns={'ds': 'Fecha', 'yhat': 'Consumo_Predicho', 'yhat_lower': 'Intervalo_Inferior', 'yhat_upper': 'Intervalo_Superior'})
-
+            forecast_display = forecast_display.rename(columns={
+                'ds': 'Fecha',
+                'yhat': 'Consumo_Predicho',
+                'yhat_lower': 'Intervalo_Inferior',
+                'yhat_upper': 'Intervalo_Superior'
+            })
+            
+            # ------------------ 修复 1:00 凸起问题 + 强制非负 ------------------
+            # 先裁掉所有负值（Prophet 常会给少量负值）
+            forecast_display['Consumo_Predicho'] = forecast_display['Consumo_Predicho'].clip(lower=0)
+            
+            # 使用 3 点滚动均值平滑去除 1:00 边缘凸起
+            forecast_display['Consumo_Predicho_Suavizado'] = (
+                forecast_display['Consumo_Predicho']
+                .rolling(window=3, center=True, min_periods=1)
+                .mean()
+            )
+            
+            # Plotly 图表显示平滑后的值
             fig = px.line(
                 forecast_display,
                 x='Fecha',
-                y='Consumo_Predicho',
+                y='Consumo_Predicho_Suavizado',
                 title="Predicción Horaria del Consumo (Próximas horas)",
-                labels={'Consumo_Predicho': 'Consumo (kWh)'},
+                labels={'Consumo_Predicho_Suavizado': 'Consumo (kWh)'},
                 color_discrete_sequence=['royalblue']
             )
+            
             st.plotly_chart(fig, use_container_width=True)
-
+            
+            # ------------------ Mostrar tabla ------------------
             mostrar_tabla = st.checkbox("📋 Mostrar tabla de predicción detallada (hourly)")
             if mostrar_tabla:
                 st.dataframe(forecast_display.round(2))
-
-            # Download forecast
+            
+            # ------------------ Download forecast ------------------
             csv_fc = forecast_display.to_csv(index=False).encode('utf-8')
-            st.download_button(label="⬇️ Descargar pronóstico hourly (CSV)", data=csv_fc, file_name='forecast_hourly.csv', mime='text/csv')
+            st.download_button(
+                label="⬇️ Descargar pronóstico hourly (CSV)",
+                data=csv_fc,
+                file_name='forecast_hourly.csv',
+                mime='text/csv'
+            )
 
             # ----------------------- Day of Week x Hour heatmap -----------------------
             st.subheader("📅 Day of Week × Hour — Mean Consumption (kWh)")
