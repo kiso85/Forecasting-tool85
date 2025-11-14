@@ -89,7 +89,8 @@ horizon_label = st.selectbox(
     }
 )
 
-horizon_hours = horizon_label
+horizon_label = st.selectbox("Select forecast horizon:", list(horizon_options.keys()))
+horizon_hours = horizon_options[horizon_label]   # must be integer!
 
 # -----------------------------------
 # Generate forecast (hourly)
