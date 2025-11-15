@@ -317,8 +317,8 @@ if selected_energy_file:
             
             st.plotly_chart(fig, use_container_width=True)
 
-            # ----------------------- Interactive forecast plot (hourly) -----------------------
-            st.subheader("📊 Gráfico Interactivo del Pronóstico (Hourly)")
+                        # ----------------------- Interactive forecast plot (hourly) -----------------------
+            st.subheader("📊 Gráfico Interactivo del Pronóstico (Hourly) - Barras")
             
             forecast_display = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(future_hours).copy()
             forecast_display = forecast_display.rename(columns={
@@ -339,17 +339,73 @@ if selected_energy_file:
                 .median()
             )
             
-            # Plotly 图表显示平滑后的值
-            fig = px.line(
+            # 添加日期时间信息用于更好的显示
+            forecast_display['Dia'] = forecast_display['Fecha'].dt.date
+            forecast_display['Hora'] = forecast_display['Fecha'].dt.hour
+            forecast_display['Dia_Semana'] = forecast_display['Fecha'].dt.day_name()
+            
+            # 创建柱状图
+            fig = px.bar(
                 forecast_display,
                 x='Fecha',
                 y='Consumo_Predicho_Suavizado',
-                title="Predicción Horaria del Consumo (Próximas horas)",
-                labels={'Consumo_Predicho_Suavizado': 'Consumo (kWh)'},
-                color_discrete_sequence=['royalblue']
+                title="Predicción Horaria del Consumo - Gráfico de Barras",
+                labels={'Consumo_Predicho_Suavizado': 'Consumo (kWh)', 'Fecha': 'Fecha y Hora'},
+                color='Consumo_Predicho_Suavizado',
+                color_continuous_scale='blues'
+            )
+            
+            # 自定义悬停信息
+            fig.update_traces(
+                hovertemplate=(
+                    "<b>Fecha:</b> %{x}<br>" +
+                    "<b>Hora:</b> %{customdata[0]}:00<br>" +
+                    "<b>Consumo:</b> %{y:.2f} kWh<br>" +
+                    "<b>Día:</b> %{customdata[1]}<extra></extra>"
+                ),
+                customdata=forecast_display[['Hora', 'Dia_Semana']]
+            )
+            
+            # 更新布局
+            fig.update_layout(
+                xaxis_title="Fecha y Hora",
+                yaxis_title="Consumo Predicho (kWh)",
+                coloraxis_colorbar=dict(title="kWh"),
+                showlegend=False
             )
             
             st.plotly_chart(fig, use_container_width=True)
+            
+            # 可选：添加每日汇总视图
+            st.subheader("📅 Vista Diaria Resumida")
+            
+            # 按日期分组计算每日总量
+            daily_summary = forecast_display.groupby('Dia').agg({
+                'Consumo_Predicho_Suavizado': 'sum',
+                'Dia_Semana': 'first'
+            }).reset_index()
+            
+            fig_daily = px.bar(
+                daily_summary,
+                x='Dia',
+                y='Consumo_Predicho_Suavizado',
+                title="Consumo Diario Predicho (Suma Horaria)",
+                labels={'Consumo_Predicho_Suavizado': 'Consumo Total (kWh)', 'Dia': 'Fecha'},
+                color='Consumo_Predicho_Suavizado',
+                color_continuous_scale='viridis'
+            )
+            
+            fig_daily.update_traces(
+                hovertemplate=(
+                    "<b>Fecha:</b> %{x}<br>" +
+                    "<b>Día:</b> %{customdata}<br>" +
+                    "<b>Consumo Total:</b> %{y:.2f} kWh<extra></extra>"
+                ),
+                customdata=daily_summary['Dia_Semana']
+            )
+            
+            fig_daily.update_layout(showlegend=False)
+            st.plotly_chart(fig_daily, use_container_width=True)
             
             # ------------------ Mostrar tabla ------------------
             mostrar_tabla = st.checkbox("📋 Mostrar tabla de predicción detallada (hourly)")
