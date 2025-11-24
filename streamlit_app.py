@@ -172,103 +172,142 @@ if selected_energy_file:
             st.write(f"Usando datos de entrenamiento: {df_prophet_train['ds'].min()} → {df_prophet_train['ds'].max()}")
 
             # ----------------------- Add regressors & features -----------------------
-            df_prophet_train['hour'] = df_prophet_train['ds'].dt.hour
-            df_prophet_train['is_weekend'] = (df_prophet_train['ds'].dt.dayofweek >= 5).astype(int)
-            df_prophet_train['hour_sin'] = np.sin(2 * np.pi * df_prophet_train['hour'] / 24.0)
-            df_prophet_train['hour_cos'] = np.cos(2 * np.pi * df_prophet_train['hour'] / 24.0)
-
-            # ----------------------- Build Prophet -----------------------
-            m = Prophet(
-                yearly_seasonality=True,
-                weekly_seasonality=True,
-                daily_seasonality=False    # 关闭默认 daily
-            )
-            
-            # 添加自定义 M 型 daily seasonality
-            m.add_seasonality(
-                name='daily_m_shape',
-                period=24,
-                fourier_order=4
-            )
-
-            # add regressors - 修正：使用 m 而不是 model
-            m.add_regressor('hour_sin')
-            m.add_regressor('hour_cos')
-            m.add_regressor('is_weekend')
-
+        # Build hourly features and explicit regressors
+        df_prophet_train['hour'] = df_prophet_train['ds'].dt.hour
+        df_prophet_train['dow'] = df_prophet_train['ds'].dt.dayofweek
+        df_prophet_train['is_weekend'] = (df_prophet_train['dow'] >= 5).astype(int)
+        
+        # Use sin/cos to encode 24h cyclical structure (more stable than raw hour)
+        df_prophet_train['hour_sin'] = np.sin(2 * np.pi * df_prophet_train['hour'] / 24.0)
+        df_prophet_train['hour_cos'] = np.cos(2 * np.pi * df_prophet_train['hour'] / 24.0)
+        
+        # ----------------------- Build Prophet (strong weekly + custom daily M-shape) -----------------------
+        # We disable the default daily and weekly and add controlled custom seasonalities
+        model = Prophet(
+            yearly_seasonality=True,
+            weekly_seasonality=False,   # we will add a stronger custom weekly
+            daily_seasonality=False,
+            seasonality_mode='additive',
+            changepoint_prior_scale=0.1
+        )
+        
+        # Strong weekly seasonality to force weekend drop behavior (increase fourier_order and prior_scale)
+        model.add_seasonality(name='weekly_strong', period=7, fourier_order=10, prior_scale=20)
+        
+        # Custom daily seasonality that encourages an M-shaped intraday curve (one morning and one afternoon peak)
+        # fourier_order tuned to capture a double-peaked day without producing artificial extra wiggles
+        model.add_seasonality(name='daily_m_shape', period=24, fourier_order=4, prior_scale=10)
+        
+        # Add explicit regressors
+        model.add_regressor('hour_sin')
+        model.add_regressor('hour_cos')
+        model.add_regressor('is_weekend')
+        
+        if include_holidays:
+            try:
+                model.add_country_holidays(country_name='ES')
+                st.sidebar.success("✅ Festivos de España añadidos.")
+            except Exception as e:
+                st.sidebar.warning(f"No se pudieron añadir festivos: {e}")
+        
+        with st.spinner("Entrenando Prophet (hourly) con regresores y seasonality ajustes..."):
+            model.fit(df_prophet_train)
+        
+        # ----------------------- Future dataframe and regressors -----------------------
+        future = model.make_future_dataframe(periods=future_hours, freq='H')
+        
+        # Build the same regressors on the future
+        future['hour'] = future['ds'].dt.hour
+        future['dow'] = future['ds'].dt.dayofweek
+        future['is_weekend'] = (future['dow'] >= 5).astype(int)
+        future['hour_sin'] = np.sin(2 * np.pi * future['hour'] / 24.0)
+        future['hour_cos'] = np.cos(2 * np.pi * future['hour'] / 24.0)
+        
+        # Ensure no missing regressors (Prophet will fail otherwise)
+        for col in ['hour_sin','hour_cos','is_weekend']:
+            if col not in future.columns:
+                future[col] = 0
+        
+        forecast = model.predict(future)
+        
+        # ----------------------- Post-process forecast to avoid negatives and remove spikes -----------------------
+        # Clip negative values
+        forecast['yhat'] = forecast['yhat'].clip(lower=0)
+        forecast['yhat_lower'] = forecast['yhat_lower'].clip(lower=0)
+        forecast['yhat_upper'] = forecast['yhat_upper'].clip(lower=0)
+        
+        # Optional: apply a short median filter on the hourly forecast to remove isolated spikes (esp. around midnight)
+        # We do this only for plotting CSV export / interactive visualization, keep raw forecast for diagnostics.
+        fc_plot = forecast[['ds','yhat','yhat_lower','yhat_upper']].copy()
+        fc_plot = fc_plot.set_index('ds').asfreq('H')  # ensure regular hourly index
+        # fill small gaps by interpolation if any (but not extrapolate)
+        fc_plot['yhat'] = fc_plot['yhat'].interpolate(limit=2)
+        # median smoothing window removes single-hour spikes (use center window 5)
+        fc_plot['yhat_med'] = fc_plot['yhat'].rolling(window=5, center=True, min_periods=1).median()
+        # also create a smoothed lower/upper if desired
+        fc_plot['yhat_lower_med'] = fc_plot['yhat_lower'].interpolate(limit=2).rolling(window=5, center=True, min_periods=1).median()
+        fc_plot['yhat_upper_med'] = fc_plot['yhat_upper'].interpolate(limit=2).rolling(window=5, center=True, min_periods=1).median()
+        
+        # Bring back to dataframe with ds column
+        fc_plot = fc_plot.reset_index().rename(columns={'index':'ds'})
+        
+        # ----------------------- Accuracy check (hourly hold-out if requested) -----------------------
+        if check_accuracy:
+            st.subheader("📊 Prophet Model Accuracy Test (Hourly)")
+            # choose last horizon_hours hours from training period as test if possible
+            horizon_hours_local = min(int(horizon_days) * 24, len(df_prophet_train))
+            cutoff = df_prophet_train['ds'].max() - pd.Timedelta(hours=horizon_hours_local)
+            train_acc = df_prophet_train[df_prophet_train['ds'] <= cutoff].copy()
+            test_acc = df_prophet_train[df_prophet_train['ds'] > cutoff].copy()
+        
+            st.write(f"Train for accuracy: {train_acc['ds'].min()} → {train_acc['ds'].max()}")
+            st.write(f"Test for accuracy:  {test_acc['ds'].min()} → {test_acc['ds'].max()}")
+        
+            # build small validation model (same structure)
+            acc_model = Prophet(yearly_seasonality=True, weekly_seasonality=False, daily_seasonality=False, seasonality_mode='additive', changepoint_prior_scale=0.1)
+            acc_model.add_seasonality(name='weekly_strong', period=7, fourier_order=10, prior_scale=20)
+            acc_model.add_seasonality(name='daily_m_shape', period=24, fourier_order=4, prior_scale=10)
+            acc_model.add_regressor('hour_sin')
+            acc_model.add_regressor('hour_cos')
+            acc_model.add_regressor('is_weekend')
             if include_holidays:
                 try:
-                    m.add_country_holidays(country_name='ES')  # 这里也要用 m
-                    st.sidebar.success("✅ Festivos de España añadidos.")
-                except Exception as e:
-                    st.sidebar.warning(f"No se pudieron añadir festivos: {e}")
+                    acc_model.add_country_holidays(country_name='ES')
+                except Exception:
+                    pass
+        
+            # prepare regressors for train_acc
+            train_acc['hour'] = train_acc['ds'].dt.hour
+            train_acc['dow'] = train_acc['ds'].dt.dayofweek
+            train_acc['is_weekend'] = (train_acc['dow'] >= 5).astype(int)
+            train_acc['hour_sin'] = np.sin(2 * np.pi * train_acc['hour'] / 24.0)
+            train_acc['hour_cos'] = np.cos(2 * np.pi * train_acc['hour'] / 24.0)
+        
+            acc_model.fit(train_acc)
+        
+            fut_test = acc_model.make_future_dataframe(periods=horizon_hours_local, freq='H')
+            fut_test['hour'] = fut_test['ds'].dt.hour
+            fut_test['dow'] = fut_test['ds'].dt.dayofweek
+            fut_test['is_weekend'] = (fut_test['dow'] >= 5).astype(int)
+            fut_test['hour_sin'] = np.sin(2 * np.pi * fut_test['hour'] / 24.0)
+            fut_test['hour_cos'] = np.cos(2 * np.pi * fut_test['hour'] / 24.0)
+        
+            fc_test = acc_model.predict(fut_test)
+        
+            # merge predictions with test_acc on ds
+            merged = pd.merge(test_acc[['ds','y']], fc_test[['ds','yhat']], on='ds', how='inner')
+            merged['squared_error'] = (merged['yhat'] - merged['y'])**2
+            MSE = np.mean(merged['squared_error'])
+            RMSE = np.sqrt(MSE)
+            st.success(f"✅ Mean Squared Error (MSE): **{MSE:.2f}**  Root MSE (RMSE): **{RMSE:.2f}**")
+        
+            # plot actual vs predicted on validation window
+            fig_acc = go.Figure()
+            fig_acc.add_trace(go.Scatter(x=merged['ds'], y=merged['y'], mode='lines', name='Actual', line=dict(color='black')))
+            fig_acc.add_trace(go.Scatter(x=merged['ds'], y=merged['yhat'], mode='lines', name='Predicted', line=dict(color='royalblue')))
+            fig_acc.update_layout(title='Actual vs Predicted (hourly) — Validation Period', xaxis_title='Date', yaxis_title='kWh')
+            st.plotly_chart(fig_acc, use_container_width=True)
 
-            with st.spinner("Entrenando Prophet (hourly) con regresores..."):
-                m.fit(df_prophet_train)  # 这里也要用 m
-
-            # ----------------------- Future dataframe and regressors -----------------------
-            future = m.make_future_dataframe(periods=future_hours, freq='H')  # 这里也要用 m
-            # ensure regressors on future
-            future['hour'] = future['ds'].dt.hour
-            future['is_weekend'] = (future['ds'].dt.dayofweek >= 5).astype(int)
-            future['hour_sin'] = np.sin(2 * np.pi * future['hour'] / 24.0)
-            future['hour_cos'] = np.cos(2 * np.pi * future['hour'] / 24.0)
-
-            forecast = m.predict(future)  # 这里也要用 m
-
-            # ----------------------- Accuracy check (hourly hold-out if requested) -----------------------
-            if check_accuracy:
-                st.subheader("📊 Prophet Model Accuracy Test (Hourly)")
-                # create hourly holdout from the end of training window
-                # use last `horizon_hours` hours from the training window as test if available
-                horizon_hours = min(int(horizon_days) * 24, len(df_prophet_train))
-                cutoff = df_prophet_train['ds'].max() - pd.Timedelta(hours=horizon_hours)
-                train_acc = df_prophet_train[df_prophet_train['ds'] <= cutoff]
-                test_acc = df_prophet_train[df_prophet_train['ds'] > cutoff]
-
-                st.write(f"Train for accuracy: {train_acc['ds'].min()} → {train_acc['ds'].max()}")
-                st.write(f"Test for accuracy:  {test_acc['ds'].min()} → {test_acc['ds'].max()}")
-
-                acc_model = Prophet(
-                    yearly_seasonality=True,
-                    weekly_seasonality=True,
-                    daily_seasonality=True,
-                    seasonality_mode='additive',
-                    changepoint_prior_scale=0.1
-                )
-                acc_model.add_regressor('hour_sin')
-                acc_model.add_regressor('hour_cos')
-                acc_model.add_regressor('is_weekend')
-                if include_holidays:
-                    try:
-                        acc_model.add_country_holidays(country_name='ES')
-                    except Exception:
-                        pass
-
-                # fit
-                acc_model.fit(train_acc)
-                fut_test = acc_model.make_future_dataframe(periods=horizon_hours, freq='H')
-                fut_test['hour'] = fut_test['ds'].dt.hour
-                fut_test['is_weekend'] = (fut_test['ds'].dt.dayofweek >= 5).astype(int)
-                fut_test['hour_sin'] = np.sin(2 * np.pi * fut_test['hour'] / 24.0)
-                fut_test['hour_cos'] = np.cos(2 * np.pi * fut_test['hour'] / 24.0)
-
-                fc_test = acc_model.predict(fut_test)
-
-                # merge on ds where ds in test_acc
-                merged = pd.merge(test_acc[['ds', 'y']], fc_test[['ds', 'yhat']], on='ds', how='inner')
-                merged['squared_error'] = (merged['yhat'] - merged['y']) ** 2
-                MSE = np.mean(merged['squared_error'])
-                RMSE = np.sqrt(MSE)
-
-                st.success(f"✅ Mean Squared Error (MSE): **{MSE:.2f}**  Root MSE (RMSE): **{RMSE:.2f}**")
-
-                # plot
-                fig_acc = go.Figure()
-                fig_acc.add_trace(go.Scatter(x=merged['ds'], y=merged['y'], mode='lines', name='Actual', line=dict(color='black')))
-                fig_acc.add_trace(go.Scatter(x=merged['ds'], y=merged['yhat'], mode='lines', name='Predicted', line=dict(color='royalblue')))
-                fig_acc.update_layout(title='Actual vs Predicted (hourly) — Validation Period', xaxis_title='Date', yaxis_title='kWh')
-                st.plotly_chart(fig_acc, use_container_width=True)
 
             # ----------------------- Show results: Prophet plots -----------------------
             st.subheader("📈 Predicción de Consumo Energético (HORARIA)")
