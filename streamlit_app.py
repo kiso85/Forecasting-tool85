@@ -435,6 +435,36 @@ if selected_energy_file:
             fig_mshape.update_layout(title="Average day profile (hourly)", xaxis_title="Hour (0-23)", yaxis_title="kWh")
             st.plotly_chart(fig_mshape, use_container_width=True)
 
+            # ----------------------- Daily Summary Bar Chart -----------------------
+            st.subheader("📊 Vista Diaria Resumida")
+            
+            # Ensure forecast exists
+            if 'forecast' in locals():
+            
+                # Convert forecast to daily totals
+                df_daily = forecast.copy()
+                df_daily['date'] = df_daily['ds'].dt.date
+                df_daily = df_daily.groupby('date')['yhat'].sum().reset_index()
+                df_daily = df_daily.rename(columns={'date': 'Fecha', 'yhat': 'Consumo_Total'})
+            
+                # Create bar chart
+                fig_daily = px.bar(
+                    df_daily,
+                    x='Fecha',
+                    y='Consumo_Total',
+                    title="Consumo Diario Predicho (Suma Horaria)",
+                    labels={'Consumo_Total': 'Consumo Total (kWh)'},
+                    color='Consumo_Total',
+                    color_continuous_scale='Viridis'
+                )
+            
+                st.plotly_chart(fig_daily, use_container_width=True)
+            
+                # Toggle detailed table
+                show_daily_table = st.checkbox("📋 Mostrar tabla de predicción detallada (daily)")
+                if show_daily_table:
+                    st.dataframe(df_daily)
+
             # ----------------------- Optional weather API -----------------------
             if api_key:
                 st.markdown("---")
